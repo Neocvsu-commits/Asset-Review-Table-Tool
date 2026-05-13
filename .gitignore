@@ -1,0 +1,22 @@
+# Python
+__pycache__/
+*.py[cod]
+.venv/
+venv/
+
+# 运行输出
+*.xlsx
+thumbnails/
+*_render_errors.log
+资产Review导出/
+
+# OS / 编辑器
+.DS_Store
+Thumbs.db
+desktop.ini
+.idea/
+.vscode/
+
+# HDR 大文件（按需保留）
+assets/hdri/*.hdr
+assets/hdri/*.exr
