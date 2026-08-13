@@ -1,7 +1,11 @@
-"""Tk 图形界面：选择多个资产根目录与输出位置，一键生成 Review 表格。"""
+"""Tk 图形界面：选择多个资产根目录与输出位置，一键生成 Review 表格。
+
+视觉令牌集中在 theme.py；本文件只做布局与交互编排。
+"""
 
 from __future__ import annotations
 
+import ctypes
 import threading
 from pathlib import Path
 from tkinter import DISABLED, END, NORMAL, filedialog, messagebox, scrolledtext, ttk
@@ -9,10 +13,15 @@ from tkinter import DISABLED, END, NORMAL, filedialog, messagebox, scrolledtext,
 import tkinter as tk
 
 from builder import build_report
-from utils import desktop_dir, find_all_blenders, find_blender_exe, resolve_hdr
+from main import __version__
+from theme import LISTBOX_OPTS, LOG_OPTS, apply_theme
+from utils import desktop_dir, find_all_blenders, find_blender_exe, resolve_hdr, tool_dir
 
-
-_TOOL_DIR = Path(__file__).resolve().parent
+# DPI 感知必须在创建任何 Tk 实例前完成（规则二）
+try:
+    ctypes.windll.shcore.SetProcessDpiAwareness(1)
+except (AttributeError, OSError):
+    pass
 
 
 class ReviewToolApp(tk.Tk):
@@ -20,58 +29,136 @@ class ReviewToolApp(tk.Tk):
         super().__init__()
         self.title("资产 Review 表格工具")
         self.minsize(640, 480)
-        self.geometry("720x560")
+        apply_theme(self)
 
+        self._running = False
         self._roots: tk.Listbox
         self._out_var = tk.StringVar(value=str(desktop_dir() / "资产Review导出"))
         self._blend_var = tk.StringVar()
+        self._status_var = tk.StringVar(value="就绪")
+        self._hint_var = tk.StringVar()
         self._log: scrolledtext.ScrolledText
         self._run_btn: ttk.Button
+        self._inputs: list = []  # 运行中需要禁用的输入控件
         self._build_ui()
+        self._center_on_screen()
+        self._update_run_state()
 
         if (b := find_blender_exe()):
             self._blend_var.set(str(b))
+            self._log_line(f"已自动探测到 Blender: {b}")
 
     # --- UI 搭建 ---------------------------------------------------------
 
     def _build_ui(self) -> None:
-        pad = {"padx": 8, "pady": 4}
+        # 状态栏（先 pack 占住底部）
+        status = ttk.Frame(self, padding=(16, 5))
+        status.pack(side=tk.BOTTOM, fill=tk.X)
+        ttk.Label(status, textvariable=self._status_var, style="Status.TLabel").pack(side=tk.LEFT)
+        ttk.Label(status, text=f"v{__version__}", style="Status.TLabel").pack(side=tk.RIGHT)
 
-        f0 = ttk.LabelFrame(
+        # 标题头
+        header = ttk.Frame(self, padding=(16, 14, 16, 8))
+        header.pack(fill=tk.X)
+        ttk.Label(header, text="资产 Review 表格工具", style="Title.TLabel").pack(anchor=tk.W)
+        ttk.Label(
+            header,
+            text="扫描资产目录，自动渲染缩略图，生成带截图的 Excel 验收报表",
+            style="Subtitle.TLabel",
+        ).pack(anchor=tk.W, pady=(4, 0))
+
+        # 资产根目录卡片
+        f0 = ttk.LabelFrame(self, text=" 资产根目录 ", padding=8)
+        f0.pack(fill=tk.BOTH, expand=True, padx=16, pady=(0, 6))
+        ttk.Label(
+            f0,
+            text="每个资产子文件夹需含 *_BasicInformation.csv 与模型文件（.glb 优先）",
+            style="Card.Hint.TLabel",
+        ).pack(anchor=tk.W, pady=(0, 4))
+        self._roots = tk.Listbox(f0, height=7, selectmode=tk.EXTENDED, **LISTBOX_OPTS)
+        self._roots.pack(fill=tk.BOTH, expand=True, pady=(0, 6))
+        bar = ttk.Frame(f0, style="Card.TFrame")
+        bar.pack(fill=tk.X)
+        for text, cmd in (
+            ("添加文件夹…", self._add_folder),
+            ("移除选中", self._remove_selected),
+            ("清空", self._clear_roots),
+        ):
+            btn = ttk.Button(bar, text=text, command=cmd)
+            btn.pack(side=tk.LEFT, padx=(0, 8))
+            self._inputs.append(btn)
+
+        # 输出目录卡片
+        f1 = ttk.LabelFrame(self, text=" 输出目录 ", padding=8)
+        f1.pack(fill=tk.X, padx=16, pady=6)
+        row = ttk.Frame(f1, style="Card.TFrame")
+        row.pack(fill=tk.X)
+        out_entry = ttk.Entry(row, textvariable=self._out_var)
+        out_entry.pack(side=tk.LEFT, fill=tk.X, expand=True, padx=(0, 8))
+        out_btn = ttk.Button(row, text="浏览…", command=self._browse_out)
+        out_btn.pack(side=tk.RIGHT)
+        self._inputs.extend([out_entry, out_btn])
+
+        # Blender 卡片
+        f2 = ttk.LabelFrame(self, text=" Blender（blender.exe，用于渲染缩略图） ", padding=8)
+        f2.pack(fill=tk.X, padx=16, pady=6)
+        row = ttk.Frame(f2, style="Card.TFrame")
+        row.pack(fill=tk.X)
+        blend_entry = ttk.Entry(row, textvariable=self._blend_var)
+        blend_entry.pack(side=tk.LEFT, fill=tk.X, expand=True, padx=(0, 8))
+        auto_btn = ttk.Button(row, text="自动查找", command=self._auto_blender)
+        auto_btn.pack(side=tk.RIGHT, padx=(8, 0))
+        browse_btn = ttk.Button(row, text="浏览…", command=self._browse_blender)
+        browse_btn.pack(side=tk.RIGHT)
+        self._inputs.extend([blend_entry, auto_btn, browse_btn])
+
+        # 主按钮与提示
+        self._run_btn = ttk.Button(
             self,
-            text="资产根目录（其下为多个资产子文件夹，每个含 BasicInformation 与模型文件）",
+            text="开始生成表格（全量合并）",
+            style="Primary.TButton",
+            command=self._on_run,
         )
-        f0.pack(fill=tk.BOTH, expand=True, **pad)
-        self._roots = tk.Listbox(f0, height=8, selectmode=tk.EXTENDED)
-        self._roots.pack(fill=tk.BOTH, expand=True, padx=6, pady=4)
-        btn_bar = ttk.Frame(f0)
-        btn_bar.pack(fill=tk.X, padx=6, pady=4)
-        ttk.Button(btn_bar, text="添加文件夹…", command=self._add_folder).pack(side=tk.LEFT, padx=2)
-        ttk.Button(btn_bar, text="移除选中", command=self._remove_selected).pack(side=tk.LEFT, padx=2)
-        ttk.Button(btn_bar, text="清空", command=self._clear_roots).pack(side=tk.LEFT, padx=2)
+        self._run_btn.pack(fill=tk.X, padx=16, pady=(10, 0))
+        ttk.Label(self, textvariable=self._hint_var, style="Hint.TLabel").pack(pady=(4, 2))
 
-        f1 = ttk.LabelFrame(self, text="输出目录（将生成 xlsx 与 thumbnails 子文件夹）")
-        f1.pack(fill=tk.X, **pad)
-        row = ttk.Frame(f1)
-        row.pack(fill=tk.X, padx=6, pady=4)
-        ttk.Entry(row, textvariable=self._out_var).pack(side=tk.LEFT, fill=tk.X, expand=True, padx=(0, 6))
-        ttk.Button(row, text="浏览…", command=self._browse_out).pack(side=tk.RIGHT)
+        # 日志卡片
+        f3 = ttk.LabelFrame(self, text=" 日志 ", padding=8)
+        f3.pack(fill=tk.BOTH, expand=True, padx=16, pady=(4, 8))
+        self._log = scrolledtext.ScrolledText(f3, height=8, state=DISABLED, **LOG_OPTS)
+        self._log.pack(fill=tk.BOTH, expand=True)
+        self._log.vbar.configure(
+            background="#F7F7F7", troughcolor="#FFFFFF", relief="flat",
+            borderwidth=0, highlightthickness=0,
+        )
 
-        f2 = ttk.LabelFrame(self, text="Blender（blender.exe，用于渲染缩略图）")
-        f2.pack(fill=tk.X, **pad)
-        row = ttk.Frame(f2)
-        row.pack(fill=tk.X, padx=6, pady=4)
-        ttk.Entry(row, textvariable=self._blend_var).pack(side=tk.LEFT, fill=tk.X, expand=True, padx=(0, 6))
-        ttk.Button(row, text="自动查找", command=self._auto_blender).pack(side=tk.RIGHT, padx=2)
-        ttk.Button(row, text="浏览…", command=self._browse_blender).pack(side=tk.RIGHT)
+    def _center_on_screen(self) -> None:
+        w, h = 760, 600
+        self.update_idletasks()
+        x = max((self.winfo_screenwidth() - w) // 2, 0)
+        y = max((self.winfo_screenheight() - h) // 3, 0)
+        self.geometry(f"{w}x{h}+{x}+{y}")
 
-        self._run_btn = ttk.Button(self, text="开始生成表格（全量合并）", command=self._on_run)
-        self._run_btn.pack(fill=tk.X, padx=8, pady=6)
+    # --- 状态 ------------------------------------------------------------
 
-        f3 = ttk.LabelFrame(self, text="日志")
-        f3.pack(fill=tk.BOTH, expand=True, **pad)
-        self._log = scrolledtext.ScrolledText(f3, height=10, state=DISABLED, wrap=tk.WORD)
-        self._log.pack(fill=tk.BOTH, expand=True, padx=6, pady=4)
+    def _update_run_state(self) -> None:
+        has_roots = self._roots.size() > 0
+        self._run_btn.configure(state=NORMAL if (has_roots and not self._running) else DISABLED)
+        if self._running:
+            self._hint_var.set("生成中，请稍候…")
+        elif not has_roots:
+            self._hint_var.set("请先添加资产根目录")
+        else:
+            self._hint_var.set("")
+
+    def _set_running(self, running: bool) -> None:
+        self._running = running
+        state = DISABLED if running else NORMAL
+        for w in self._inputs:
+            w.configure(state=state)
+        self._run_btn.configure(text="生成中…" if running else "开始生成表格（全量合并）")
+        self._status_var.set("生成中…" if running else "就绪")
+        self._update_run_state()
 
     # --- 控件回调 --------------------------------------------------------
 
@@ -85,14 +172,17 @@ class ReviewToolApp(tk.Tk):
         p = filedialog.askdirectory(title="选择资产根目录")
         if p:
             self._roots.insert(END, p)
+            self._update_run_state()
             self._log_line(f"已添加: {p}")
 
     def _remove_selected(self) -> None:
         for i in reversed(list(self._roots.curselection())):
             self._roots.delete(i)
+        self._update_run_state()
 
     def _clear_roots(self) -> None:
         self._roots.delete(0, END)
+        self._update_run_state()
 
     def _browse_out(self) -> None:
         p = filedialog.askdirectory(title="选择输出目录", initialdir=self._out_var.get() or str(desktop_dir()))
@@ -142,7 +232,7 @@ class ReviewToolApp(tk.Tk):
                 messagebox.showerror("路径无效", f"不是有效文件夹:\n{r}")
                 return
 
-        self._run_btn.configure(state=DISABLED)
+        self._set_running(True)
         self._log_line("—— 开始执行 ——")
         threading.Thread(
             target=self._run_in_background,
@@ -159,7 +249,7 @@ class ReviewToolApp(tk.Tk):
                 roots=roots,
                 out_dir=out_dir,
                 blender=blender,
-                hdr=resolve_hdr(_TOOL_DIR),
+                hdr=resolve_hdr(tool_dir()),
                 log=log,
             )
         except Exception as exc:
@@ -168,11 +258,14 @@ class ReviewToolApp(tk.Tk):
         self.after(0, lambda: self._finish_with_success(xlsx_path))
 
     def _finish_with_success(self, xlsx_path: Path) -> None:
-        self._run_btn.configure(state=NORMAL)
-        messagebox.showinfo("完成", f"已生成表格:\n{xlsx_path}")
+        self._set_running(False)
+        self._status_var.set("已完成")
+        self._log_line(f"已生成表格: {xlsx_path}")
 
     def _finish_with_error(self, message: str) -> None:
-        self._run_btn.configure(state=NORMAL)
+        self._set_running(False)
+        self._status_var.set("失败")
+        self._log_line(f"[错误] {message}")
         messagebox.showerror("失败", message)
 
 

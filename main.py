@@ -17,7 +17,7 @@ import sys
 from pathlib import Path
 
 
-_TOOL_DIR = Path(__file__).resolve().parent
+__version__ = "1.0.0"
 
 
 def _parse_args() -> argparse.Namespace:
@@ -37,7 +37,7 @@ def _parse_args() -> argparse.Namespace:
 
 def _run_cli(args: argparse.Namespace) -> int:
     from builder import build_report
-    from utils import find_blender_exe, resolve_hdr
+    from utils import find_blender_exe, resolve_hdr, tool_dir
 
     if not args.roots or not args.out_dir:
         print("ERROR: --assets-root 与 --out-dir 为必填项。", file=sys.stderr)
@@ -51,7 +51,7 @@ def _run_cli(args: argparse.Namespace) -> int:
         print(f"ERROR: --blender 指向的文件不存在: {blender}", file=sys.stderr)
         return 2
 
-    hdr = args.hdr or resolve_hdr(_TOOL_DIR)
+    hdr = args.hdr or resolve_hdr(tool_dir())
     try:
         build_report(
             roots=args.roots,

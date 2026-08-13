@@ -14,7 +14,7 @@
 | :--- | :--- |
 | 系统 | Windows 10/11 |
 | Blender | 4.2 LTS（推荐，5.x 截图发白请换 4.2） |
-| Python | 3.9+ |
+| Python | 3.9+（仅源码模式；exe 版无需 Python） |
 
 双击 `启动.bat` 时如果没检测到 Python，会自动尝试 winget 安装；winget 不可用时从 python.org 下载静默安装。Blender 路径工具会自动从盘符根目录、用户目录、Program Files、Steam、注册表等位置探测，不用手动配。
 
@@ -40,7 +40,7 @@
 
 ### 图形界面（推荐）
 
-双击 `启动.bat`，然后：
+双击 `资产Review表格工具-portable-*.exe`（无需 Python）或 `启动.bat`，然后：
 
 1. 点「添加文件夹…」选一个或多个资产根目录
 2. 确认输出目录（默认在桌面 `资产Review导出`）
@@ -52,6 +52,15 @@
 - `资产review归档_全量_YYYYMMDD.xlsx`（单根目录）或 `_合并_` 版（多根）
 - `thumbnails/` 子目录（所有缩略图）
 - `_render_errors.log`（仅在渲染失败时写入）
+
+### 打包版（exe）
+
+双击 `自动打包工具.bat` 即可在干净 venv 中构建：
+
+- 产出 `资产Review表格工具-Windows\资产Review表格工具-portable-YYYYMMDD-HHMMSS.exe`
+- 内置渲染脚本与默认 HDR（`aristea_wreck_puresky_1k.hdr`），双击即用
+- Blender 仍需已安装（自动探测，或手动指定 `blender.exe`）
+- 想在 exe 旁自定义打光：放置 `assets\hdri\*.hdr` 或同目录 HDR 文件，优先于内置
 
 ### 命令行
 

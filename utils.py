@@ -22,7 +22,16 @@ NON_TEXTURE_SUFFIXES = frozenset({
 
 SKIP_DIRS = frozenset({"thumbnails", ".git", "__pycache__"})
 
+HDR_NAME = "aristea_wreck_puresky_1k.hdr"
+
 _AFFIRMATIVE = frozenset({"是", "yes", "true", "1", "有", "开启", "含", "包含"})
+
+
+def tool_dir() -> Path:
+    """工具根目录：源码模式为仓库目录，frozen（PyInstaller）模式为 exe 所在目录。"""
+    if getattr(sys, "frozen", False):
+        return Path(sys.executable).resolve().parent
+    return Path(__file__).resolve().parent
 
 
 def human_size(n: int) -> str:
@@ -317,11 +326,18 @@ def find_blender_exe() -> Path | None:
 
 
 def resolve_hdr(tool_dir: Path) -> Path | None:
-    """返回工具目录下可用的环境 HDR 文件，未找到时返回 None。"""
-    candidates = (
-        tool_dir / "assets" / "hdri" / "aristea_wreck_puresky_1k.hdr",
-        tool_dir / "aristea_wreck_puresky_1k.hdr",
-    )
+    """返回可用的环境 HDR 文件；未找到时返回 None。
+
+    查找顺序：工具目录 assets/hdri/ → 工具目录根 → frozen 模式的内置副本。
+    前两者允许用户在 exe 旁放置自定义 HDR 覆盖内置。
+    """
+    candidates = [
+        tool_dir / "assets" / "hdri" / HDR_NAME,
+        tool_dir / HDR_NAME,
+    ]
+    meipass = getattr(sys, "_MEIPASS", None)
+    if meipass:
+        candidates.append(Path(meipass) / HDR_NAME)
     for p in candidates:
         if p.is_file():
             return p

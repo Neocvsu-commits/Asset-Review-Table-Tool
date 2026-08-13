@@ -20,3 +20,9 @@ desktop.ini
 # HDR 大文件（按需保留）
 assets/hdri/*.hdr
 assets/hdri/*.exr
+
+# 打包
+.venv-build/
+build/
+dist/
+*.spec

@@ -21,6 +21,13 @@ ENGINE_ORDER: tuple[str, ...] = ("BLENDER_EEVEE_NEXT", "CYCLES")
 _SCRIPT_PATH = Path(__file__).with_name("blender_script.py")
 
 
+def _script_path() -> Path:
+    """blender_script.py 的磁盘位置：frozen 模式从 PyInstaller 解压目录取。"""
+    if getattr(sys, "frozen", False):
+        return Path(sys._MEIPASS) / "blender_script.py"
+    return _SCRIPT_PATH
+
+
 def render_one(
     model: Path,
     output: Path,
@@ -58,7 +65,7 @@ def render_one(
 def _build_cmd(model: Path, output: Path, blender: Path, engine: str, hdr: Path | None) -> list[str]:
     cmd = [
         str(blender), "--background", "--factory-startup",
-        "--python", str(_SCRIPT_PATH), "--",
+        "--python", str(_script_path()), "--",
         "--input", str(model),
         "--output", str(output),
         "--width", str(WIDTH),
