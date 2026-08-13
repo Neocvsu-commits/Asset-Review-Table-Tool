@@ -14,7 +14,7 @@ import tkinter as tk
 
 from builder import build_report
 from main import __version__
-from theme import LISTBOX_OPTS, LOG_OPTS, apply_theme
+from theme import BG_DEEP, BTN_BG, LISTBOX_OPTS, LOG_OPTS, apply_theme
 from utils import desktop_dir, find_all_blenders, find_blender_exe, resolve_hdr, tool_dir
 
 # DPI 感知必须在创建任何 Tk 实例前完成（规则二）
@@ -41,7 +41,7 @@ class ReviewToolApp(tk.Tk):
         self._run_btn: ttk.Button
         self._inputs: list = []  # 运行中需要禁用的输入控件
         self._build_ui()
-        self._center_on_screen()
+        self._fit_initial_size()
         self._update_run_state()
 
         if (b := find_blender_exe()):
@@ -67,26 +67,15 @@ class ReviewToolApp(tk.Tk):
             style="Subtitle.TLabel",
         ).pack(anchor=tk.W, pady=(4, 0))
 
-        # 资产根目录卡片
-        f0 = ttk.LabelFrame(self, text=" 资产根目录 ", padding=8)
-        f0.pack(fill=tk.BOTH, expand=True, padx=16, pady=(0, 6))
-        ttk.Label(
-            f0,
-            text="每个资产子文件夹需含 *_BasicInformation.csv 与模型文件（.glb 优先）",
-            style="Card.Hint.TLabel",
-        ).pack(anchor=tk.W, pady=(0, 4))
-        self._roots = tk.Listbox(f0, height=7, selectmode=tk.EXTENDED, **LISTBOX_OPTS)
-        self._roots.pack(fill=tk.BOTH, expand=True, pady=(0, 6))
-        bar = ttk.Frame(f0, style="Card.TFrame")
-        bar.pack(fill=tk.X)
-        for text, cmd in (
-            ("添加文件夹…", self._add_folder),
-            ("移除选中", self._remove_selected),
-            ("清空", self._clear_roots),
-        ):
-            btn = ttk.Button(bar, text=text, command=cmd)
-            btn.pack(side=tk.LEFT, padx=(0, 8))
-            self._inputs.append(btn)
+        # 主按钮与提示（先 pack，窗口被压缩时优先保住它们）
+        self._run_btn = ttk.Button(
+            self,
+            text="开始生成表格（全量合并）",
+            style="Primary.TButton",
+            command=self._on_run,
+        )
+        self._run_btn.pack(fill=tk.X, padx=16, pady=(10, 0))
+        ttk.Label(self, textvariable=self._hint_var, style="Hint.TLabel").pack(pady=(4, 2))
 
         # 输出目录卡片
         f1 = ttk.LabelFrame(self, text=" 输出目录 ", padding=8)
@@ -112,31 +101,46 @@ class ReviewToolApp(tk.Tk):
         browse_btn.pack(side=tk.RIGHT)
         self._inputs.extend([blend_entry, auto_btn, browse_btn])
 
-        # 主按钮与提示
-        self._run_btn = ttk.Button(
-            self,
-            text="开始生成表格（全量合并）",
-            style="Primary.TButton",
-            command=self._on_run,
-        )
-        self._run_btn.pack(fill=tk.X, padx=16, pady=(10, 0))
-        ttk.Label(self, textvariable=self._hint_var, style="Hint.TLabel").pack(pady=(4, 2))
+        # 资产根目录卡片（最后 pack 的可伸缩区，压缩时优先让位）
+        f0 = ttk.LabelFrame(self, text=" 资产根目录 ", padding=8)
+        f0.pack(fill=tk.BOTH, expand=True, padx=16, pady=(0, 6))
+        ttk.Label(
+            f0,
+            text="每个资产子文件夹需含 *_BasicInformation.csv 与模型文件（.glb 优先）",
+            style="Card.Hint.TLabel",
+        ).pack(anchor=tk.W, pady=(0, 4))
+        self._roots = tk.Listbox(f0, height=6, selectmode=tk.EXTENDED, **LISTBOX_OPTS)
+        self._roots.pack(fill=tk.BOTH, expand=True, pady=(0, 6))
+        bar = ttk.Frame(f0, style="Card.TFrame")
+        bar.pack(fill=tk.X)
+        for text, cmd in (
+            ("添加文件夹…", self._add_folder),
+            ("移除选中", self._remove_selected),
+            ("清空", self._clear_roots),
+        ):
+            btn = ttk.Button(bar, text=text, command=cmd)
+            btn.pack(side=tk.LEFT, padx=(0, 8))
+            self._inputs.append(btn)
 
-        # 日志卡片
+        # 日志卡片（最末 pack，最优先被压缩）
         f3 = ttk.LabelFrame(self, text=" 日志 ", padding=8)
         f3.pack(fill=tk.BOTH, expand=True, padx=16, pady=(4, 8))
-        self._log = scrolledtext.ScrolledText(f3, height=8, state=DISABLED, **LOG_OPTS)
+        self._log = scrolledtext.ScrolledText(f3, height=6, state=DISABLED, width=60, **LOG_OPTS)
         self._log.pack(fill=tk.BOTH, expand=True)
         self._log.vbar.configure(
-            background="#F7F7F7", troughcolor="#FFFFFF", relief="flat",
+            background=BTN_BG, troughcolor=BG_DEEP, relief="flat",
             borderwidth=0, highlightthickness=0,
         )
 
-    def _center_on_screen(self) -> None:
-        w, h = 760, 600
+    def _fit_initial_size(self) -> None:
+        """按内容自然尺寸开窗（钳制在屏幕 92% 内），任何 DPI 下默认完整显示。"""
         self.update_idletasks()
-        x = max((self.winfo_screenwidth() - w) // 2, 0)
-        y = max((self.winfo_screenheight() - h) // 3, 0)
+        req_w, req_h = self.winfo_reqwidth(), self.winfo_reqheight()
+        sw, sh = self.winfo_screenwidth(), self.winfo_screenheight()
+        w = min(max(req_w, 640), int(sw * 0.92))
+        h = min(max(req_h, 480), int(sh * 0.92))
+        x = max((sw - w) // 2, 0)
+        y = max((sh - h) // 3, 0)
         self.geometry(f"{w}x{h}+{x}+{y}")
 
     # --- 状态 ------------------------------------------------------------

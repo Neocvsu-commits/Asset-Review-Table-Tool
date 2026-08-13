@@ -1,7 +1,7 @@
-"""Win11 浅色视觉令牌与 ttk 样式装配。
+"""深色视觉令牌与 ttk 样式装配（对齐 TexTool，oklch 精确转 hex）。
 
 颜色与字号集中定义于此，组件代码禁止写死色值/字号（规则三）。
-未来加深色主题时：增加一套暗色令牌映射，在 apply_theme 中按偏好切换。
+令牌来源：TexTool apps/desktop/frontend/src/styles/index.css 的 dark 主题。
 """
 
 from __future__ import annotations
@@ -9,19 +9,20 @@ from __future__ import annotations
 import tkinter as tk
 from tkinter import ttk
 
-# ─── 色板（Win11 浅色） ───
-BG = "#F3F3F3"            # 窗口底
-CARD = "#FFFFFF"          # 卡片 / 输入框
-BORDER = "#E5E5E5"        # 1px 边框
-TEXT = "#1A1A1A"          # 主文本
-TEXT_SEC = "#5F5F5F"      # 次级文本
-ACCENT = "#0067C0"        # 强调蓝（主按钮 / 列表选中）
-ACCENT_HOVER = "#1975C4"
-BTN_BG = "#FFFFFF"        # 普通按钮
-BTN_HOVER = "#F7F7F7"
-BTN_PRESSED = "#EFEFEF"
-DISABLED_BG = "#E5E5E5"
-DISABLED_FG = "#9E9E9E"
+# ─── 色板（TexTool dark 主题，oklch 精确转换） ───
+BG = "#181B1E"            # base-100 窗口底
+BG_DEEP = "#0D1013"       # base-200 输入区/日志底
+CARD = "#27292D"          # base-300 卡片
+BORDER = "#34383E"        # 1px 边框
+TEXT = "#D5D4D0"          # base-content 主文本
+TEXT_SEC = "#8F8E8A"      # 次级文本
+ACCENT = "#248A3F"        # primary 主按钮/选中
+ACCENT_HOVER = "#57A364"  # accent hover
+BTN_BG = "#27292D"        # 普通按钮
+BTN_HOVER = "#34383E"
+BTN_PRESSED = "#202327"
+DISABLED_BG = "#232529"
+DISABLED_FG = "#5F6266"
 
 # ─── 字体 ───
 FONT_FAMILY = "Microsoft YaHei UI"
@@ -32,11 +33,11 @@ FONT_LOG = (FONT_FAMILY, 9)
 
 # ─── 裸 tk 控件配色（ttk 样式无法覆盖 Listbox / Text / 原生 Scrollbar） ───
 LISTBOX_OPTS: dict = {
-    "bg": CARD,
+    "bg": BG_DEEP,
     "fg": TEXT,
     "font": FONT_BODY,
     "selectbackground": ACCENT,
-    "selectforeground": "#FFFFFF",
+    "selectforeground": "#F8F8F8",
     "activestyle": "none",
     "relief": "flat",
     "highlightthickness": 1,
@@ -46,7 +47,7 @@ LISTBOX_OPTS: dict = {
 }
 
 LOG_OPTS: dict = {
-    "bg": CARD,
+    "bg": BG_DEEP,
     "fg": TEXT,
     "font": FONT_LOG,
     "relief": "flat",
@@ -107,7 +108,7 @@ def apply_theme(root: tk.Tk) -> None:
     style.configure(
         "Primary.TButton",
         background=ACCENT,
-        foreground="#FFFFFF",
+        foreground="#F8F8F8",
         bordercolor=ACCENT,
         padding=(16, 7),
         relief="flat",
@@ -126,7 +127,7 @@ def apply_theme(root: tk.Tk) -> None:
     # 输入框
     style.configure(
         "TEntry",
-        fieldbackground=CARD,
+        fieldbackground=BG_DEEP,
         foreground=TEXT,
         bordercolor=BORDER,
         lightcolor=BORDER,
@@ -139,7 +140,7 @@ def apply_theme(root: tk.Tk) -> None:
     # 滚动条
     style.configure(
         "Vertical.TScrollbar",
-        background=BTN_HOVER,
+        background=BTN_BG,
         troughcolor=BG,
         bordercolor=BG,
         arrowcolor=TEXT_SEC,
