@@ -25,6 +25,10 @@ from utils import (
 )
 
 
+class BuildCancelled(RuntimeError):
+    """用户取消了当前生成任务。"""
+
+
 HEADERS: tuple[str, ...] = (
     "资产名称", "中文名称", "骨骼", "动画", "动画类型",
     "模型截图", "三角面数", "材质球数量", "贴图数量",
@@ -53,13 +57,22 @@ class _Row:
     png: Path | None
 
 
-def _gather_candidates(roots: Iterable[Path], log: Callable[[str], None]) -> list[Path]:
+def _gather_candidates(
+    roots: Iterable[Path],
+    log: Callable[[str], None],
+    is_cancelled: Callable[[], bool] | None = None,
+) -> list[Path]:
+    is_cancelled = is_cancelled or (lambda: False)
     items: list[Path] = []
     for root in roots:
+        if is_cancelled():
+            raise BuildCancelled("任务已取消")
         if not root.is_dir():
             log(f"警告: 目录不存在，已跳过: {root}")
             continue
         for child in sorted(root.iterdir()):
+            if is_cancelled():
+                raise BuildCancelled("任务已取消")
             if not child.is_dir():
                 continue
             if not any(child.glob("*_BasicInformation.csv")):
@@ -84,7 +97,14 @@ def _deduplicate(folders: list[Path], log: Callable[[str], None]) -> list[Path]:
     return kept
 
 
-def _row_from_folder(folder: Path, thumb_dir: Path, blender: Path, hdr: Path | None, error_log: Path) -> _Row:
+def _row_from_folder(
+    folder: Path,
+    thumb_dir: Path,
+    blender: Path,
+    hdr: Path | None,
+    error_log: Path,
+    is_cancelled: Callable[[], bool] | None = None,
+) -> _Row:
     csv_path = next(folder.glob("*_BasicInformation.csv"))
     info = parse_basic_csv(csv_path)
     name = info.get("资产名称", folder.name)
@@ -95,7 +115,7 @@ def _row_from_folder(folder: Path, thumb_dir: Path, blender: Path, hdr: Path | N
     ok = False
     model = find_render_model(folder)
     if model:
-        ok, log_text = render_one(model, png_out, blender, hdr=hdr)
+        ok, log_text = render_one(model, png_out, blender, hdr=hdr, is_cancelled=is_cancelled)
         if not ok and log_text:
             try:
                 with error_log.open("a", encoding="utf-8") as fp:
@@ -175,8 +195,11 @@ def build_report(
     limit: int | None = None,
     seed: int = 20260512,
     log: Callable[[str], None] = print,
+    progress: Callable[[int, int, str], None] | None = None,
+    is_cancelled: Callable[[], bool] | None = None,
 ) -> Path:
     """执行完整流程：扫描 → 去重 → 渲染 → 写表。返回生成的 xlsx 路径。"""
+    is_cancelled = is_cancelled or (lambda: False)
     roots = [r.expanduser().resolve() for r in roots]
     out_dir = out_dir.expanduser().resolve()
     out_dir.mkdir(parents=True, exist_ok=True)
@@ -190,7 +213,9 @@ def build_report(
         except OSError:
             pass
 
-    raw = _gather_candidates(roots, log)
+    if is_cancelled():
+        raise BuildCancelled("任务已取消")
+    raw = _gather_candidates(roots, log, is_cancelled)
     if not raw:
         raise RuntimeError("未找到任何包含 *_BasicInformation.csv 与 .glb/.fbx 的资产文件夹")
 
@@ -208,9 +233,19 @@ def build_report(
     log(f"准备处理 {len(picked)} 个资产...")
     rows: list[_Row] = []
     for i, folder in enumerate(sorted(picked, key=lambda p: p.name), start=1):
+        if is_cancelled():
+            raise BuildCancelled("任务已取消")
         log(f"[{i}/{len(picked)}] {folder.name}")
-        rows.append(_row_from_folder(folder, thumb_dir, blender, hdr, error_log))
+        if progress:
+            progress(i - 1, len(picked), folder.name)
+        rows.append(_row_from_folder(folder, thumb_dir, blender, hdr, error_log, is_cancelled))
+        if is_cancelled():
+            raise BuildCancelled("任务已取消")
 
+    if is_cancelled():
+        raise BuildCancelled("任务已取消")
+    if progress:
+        progress(len(picked), len(picked), "正在写入 Excel · 暂不可取消")
     xlsx_path = _xlsx_filename(out_dir, len(roots), limit)
     _write_workbook(rows, xlsx_path)
     log(f"已生成: {xlsx_path}（{len(rows)} 行）")

@@ -10,7 +10,7 @@ function Find-Python {
     return $null
 }
 
-Write-Host "[1/4] 探测 Python ..."
+Write-Host "[1/5] 探测 Python ..."
 $py = Find-Python
 if (-not $py) {
     Write-Host "[错误] 未找到 Python，请先安装 Python 3.9+，或运行 启动.bat 自动安装。" -ForegroundColor Red
@@ -18,7 +18,7 @@ if (-not $py) {
 }
 Write-Host "  使用: $py"
 
-Write-Host "[2/4] 准备虚拟环境 .venv-build ..."
+Write-Host "[2/5] 准备虚拟环境 .venv-build ..."
 $venv = Join-Path $PSScriptRoot ".venv-build"
 $venvPy = Join-Path $venv "Scripts\python.exe"
 if (-not (Test-Path $venvPy)) {
@@ -27,13 +27,15 @@ if (-not (Test-Path $venvPy)) {
     if ($LASTEXITCODE -ne 0) { Write-Host "[错误] venv 创建失败" -ForegroundColor Red; exit 1 }
 }
 
-Write-Host "[3/4] 安装依赖与 PyInstaller ..."
+Write-Host "[3/5] 安装依赖与 PyInstaller ..."
 & $venvPy -m pip install --upgrade pip | Out-Null
 & $venvPy -m pip install -r (Join-Path $PSScriptRoot "requirements.txt") pyinstaller | Out-Null
 if ($LASTEXITCODE -ne 0) { Write-Host "[错误] 依赖安装失败" -ForegroundColor Red; exit 1 }
 
-Write-Host "[4/4] PyInstaller 打包（onefile，内置 HDR 与渲染脚本）..."
+Write-Host "[4/5] 运行回归检查并打包（onefile，内置 HDR 与渲染脚本）..."
 Set-Location $PSScriptRoot
+& $venvPy -m unittest discover -s tests -p "test_*.py"
+if ($LASTEXITCODE -ne 0) { Write-Host "[错误] 回归测试失败" -ForegroundColor Red; exit 1 }
 & $venvPy -m PyInstaller --onefile --windowed --noconfirm --clean `
     --name "资产Review表格工具" `
     --add-data "blender_script.py;." `

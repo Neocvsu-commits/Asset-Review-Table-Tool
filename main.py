@@ -17,7 +17,7 @@ import sys
 from pathlib import Path
 
 
-__version__ = "1.0.0"
+__version__ = "1.1.0"
 
 
 def _parse_args() -> argparse.Namespace:

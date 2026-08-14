@@ -4,7 +4,9 @@ from __future__ import annotations
 
 import subprocess
 import sys
+import time
 from pathlib import Path
+from typing import Callable
 
 from PIL import Image
 
@@ -16,6 +18,7 @@ MAX_HEIGHT = 347
 PADDING = 0.08
 SAMPLES = 64
 HDR_STRENGTH = 1.0
+RENDER_TIMEOUT_SECONDS = 30 * 60
 
 ENGINE_ORDER: tuple[str, ...] = ("BLENDER_EEVEE_NEXT", "CYCLES")
 _SCRIPT_PATH = Path(__file__).with_name("blender_script.py")
@@ -35,8 +38,11 @@ def render_one(
     *,
     hdr: Path | None = None,
     engines: tuple[str, ...] = ENGINE_ORDER,
+    is_cancelled: Callable[[], bool] | None = None,
+    timeout_seconds: float = RENDER_TIMEOUT_SECONDS,
 ) -> tuple[bool, str]:
     """渲染单个模型；按 engines 顺序依次尝试，首个成功即返回。"""
+    is_cancelled = is_cancelled or (lambda: False)
     output.parent.mkdir(parents=True, exist_ok=True)
     logs: list[str] = []
     for engine in engines:
@@ -46,13 +52,20 @@ def render_one(
             except OSError:
                 pass
         cmd = _build_cmd(model, output, blender, engine, hdr)
-        result = subprocess.run(cmd, **_subprocess_kwargs())
-        stdout, stderr = (result.stdout or "").strip(), (result.stderr or "").strip()
+        if is_cancelled():
+            return False, "[cancelled] 用户取消了渲染"
+        returncode, stdout, stderr, stop_reason = _run_process(
+            cmd, is_cancelled=is_cancelled, timeout_seconds=timeout_seconds
+        )
+        stdout, stderr = stdout.strip(), stderr.strip()
         if stdout:
             logs.append(f"[engine={engine}]\n{stdout}")
         if stderr:
             logs.append(f"[engine={engine} stderr]\n{stderr}")
-        if result.returncode == 0 and output.exists():
+        if stop_reason:
+            logs.append(f"[engine={engine}] {stop_reason}")
+            return False, "\n\n".join(logs)
+        if returncode == 0 and output.exists():
             try:
                 _composite_background(output, BG_COLOR)
             except Exception as exc:
@@ -60,6 +73,38 @@ def render_one(
                 return False, "\n\n".join(logs)
             return True, "\n\n".join(logs)
     return False, "\n\n".join(logs)
+
+
+def _run_process(
+    cmd: list[str],
+    *,
+    is_cancelled: Callable[[], bool],
+    timeout_seconds: float,
+) -> tuple[int, str, str, str | None]:
+    """运行 Blender，并在取消或超时时可靠终止子进程。"""
+    process = subprocess.Popen(cmd, **_subprocess_kwargs())
+    started = time.monotonic()
+    while True:
+        try:
+            stdout, stderr = process.communicate(timeout=0.25)
+            return process.returncode, stdout or "", stderr or "", None
+        except subprocess.TimeoutExpired:
+            if is_cancelled():
+                stdout, stderr = _terminate_process(process)
+                return process.returncode or -1, stdout, stderr, "用户取消了渲染"
+            if time.monotonic() - started >= timeout_seconds:
+                stdout, stderr = _terminate_process(process)
+                return process.returncode or -1, stdout, stderr, f"渲染超过 {timeout_seconds:g} 秒，已终止"
+
+
+def _terminate_process(process: subprocess.Popen) -> tuple[str, str]:
+    process.terminate()
+    try:
+        stdout, stderr = process.communicate(timeout=5)
+    except subprocess.TimeoutExpired:
+        process.kill()
+        stdout, stderr = process.communicate()
+    return stdout or "", stderr or ""
 
 
 def _build_cmd(model: Path, output: Path, blender: Path, engine: str, hdr: Path | None) -> list[str]:
@@ -84,7 +129,8 @@ def _build_cmd(model: Path, output: Path, blender: Path, engine: str, hdr: Path 
 
 def _subprocess_kwargs() -> dict:
     kwargs: dict = {
-        "capture_output": True,
+        "stdout": subprocess.PIPE,
+        "stderr": subprocess.PIPE,
         "text": True,
         "encoding": "utf-8",
         "errors": "replace",
