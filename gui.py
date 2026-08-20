@@ -1,4 +1,4 @@
-"""资产 Review 表格工具的 TexTool 系列工作台界面。"""
+"""资产 Review 表格工具的轻量单页界面。"""
 
 from __future__ import annotations
 
@@ -12,8 +12,7 @@ from tkinter import DISABLED, END, NORMAL, filedialog, messagebox, scrolledtext,
 import tkinter as tk
 
 from builder import BuildCancelled, build_report
-from main import __version__
-from theme import PALETTES, ZOOM_STEPS, apply_theme, native_widget_options, resolve_theme
+from theme import apply_theme, native_widget_options
 from utils import desktop_dir, find_all_blenders, resolve_hdr, tool_dir
 
 try:
@@ -30,17 +29,12 @@ class ReviewToolApp(tk.Tk):
     def __init__(self) -> None:
         super().__init__()
         self.title(APP_TITLE)
-        self.minsize(1040, 680)
+        self.minsize(820, 560)
 
         self._settings = self._load_settings()
-        self._theme_preference = self._settings.get("theme", "system")
-        if self._theme_preference not in ("dark", "light", "system"):
-            self._theme_preference = "system"
-        self._theme = resolve_theme(self._theme_preference, self._system_prefers_light())
-        self._zoom = self._safe_int(self._settings.get("zoom"), 100)
-        if self._zoom not in ZOOM_STEPS:
-            self._zoom = 100
-        self._palette = apply_theme(self, self._theme, self._zoom)
+        self._settings.pop("theme", None)
+        self._settings.pop("zoom", None)
+        self._palette = apply_theme(self)
 
         self._running = False
         self._closing = False
@@ -54,9 +48,7 @@ class ReviewToolApp(tk.Tk):
         self._run_btn: ttk.Button
         self._cancel_btn: ttk.Button
         self._open_btn: ttk.Button
-        self._theme_btn: ttk.Button
-        self._zoom_btn: ttk.Button
-        self._status_label: ttk.Label
+        self._progress_label: ttk.Label
         self._progress: ttk.Progressbar
 
         self._out_var = tk.StringVar(
@@ -65,7 +57,6 @@ class ReviewToolApp(tk.Tk):
         self._blend_var = tk.StringVar(value=str(self._settings.get("blender_path") or ""))
         self._out_var.trace_add("write", self._on_path_edited)
         self._blend_var.trace_add("write", self._on_path_edited)
-        self._status_var = tk.StringVar(value="就绪")
         self._hint_var = tk.StringVar(value="请先添加资产根目录")
         self._progress_var = tk.StringVar(value="等待开始")
         self._progress_value = tk.DoubleVar(value=0)
@@ -78,58 +69,14 @@ class ReviewToolApp(tk.Tk):
         self.bind("<Control-Return>", lambda _event: self._on_run())
         self.bind("<Escape>", lambda _event: self._request_cancel())
         self.after(120, self._start_blender_detection)
-        self.after(2000, self._poll_system_theme)
 
-    # ─── 外壳与布局 ───────────────────────────────────────────────────────
+    # ─── 布局 ─────────────────────────────────────────────────────────────
 
     def _build_ui(self) -> None:
-        footer = ttk.Frame(self, style="Footer.TFrame", padding=(12, 4))
-        footer.pack(side=tk.BOTTOM, fill=tk.X)
-        self._status_label = ttk.Label(
-            footer, textvariable=self._status_var, style="Status.TLabel"
-        )
-        self._status_label.pack(side=tk.LEFT)
-        ttk.Label(
-            footer, text="表格生成", style="Status.TLabel"
-        ).pack(side=tk.LEFT, expand=True)
-        self._theme_btn = ttk.Button(
-            footer, text=self._theme_button_text(), style="Link.TButton", command=self._cycle_theme
-        )
-        self._theme_btn.pack(side=tk.RIGHT, padx=(4, 0))
-        self._zoom_btn = ttk.Button(
-            footer, text=f"{self._zoom}%", style="Link.TButton", command=self._cycle_zoom
-        )
-        self._zoom_btn.pack(side=tk.RIGHT, padx=(4, 0))
-        ttk.Label(footer, text=f"v{__version__}", style="Status.TLabel").pack(side=tk.RIGHT, padx=(0, 4))
-
-        shell = ttk.Frame(self)
-        shell.pack(fill=tk.BOTH, expand=True)
-
-        sidebar = ttk.Frame(shell, style="Sidebar.TFrame", width=196)
-        sidebar.pack(side=tk.LEFT, fill=tk.Y)
-        sidebar.pack_propagate(False)
-        self._build_sidebar(sidebar)
-
-        separator = tk.Frame(shell, width=1, bg=self._palette["border"])
-        separator.pack(side=tk.LEFT, fill=tk.Y)
-
-        page = ttk.Frame(shell)
-        page.pack(side=tk.LEFT, fill=tk.BOTH, expand=True)
-
-        header = ttk.Frame(page, padding=(22, 16, 22, 13))
-        header.pack(fill=tk.X)
-        ttk.Label(header, text="表格生成", style="Title.TLabel").pack(anchor=tk.W)
-        ttk.Label(
-            header,
-            text="扫描资产目录，自动渲染缩略图并生成 Excel 验收报表",
-            style="Subtitle.TLabel",
-        ).pack(anchor=tk.W, pady=(3, 0))
-        tk.Frame(page, height=1, bg=self._palette["border"]).pack(fill=tk.X)
-
-        content = ttk.Frame(page, padding=(18, 16, 18, 14))
+        content = ttk.Frame(self, padding=14)
         content.pack(fill=tk.BOTH, expand=True)
-        content.columnconfigure(0, weight=3, minsize=420)
-        content.columnconfigure(1, weight=2, minsize=300)
+        content.columnconfigure(0, weight=3, minsize=400)
+        content.columnconfigure(1, weight=2, minsize=280)
         content.rowconfigure(0, weight=1)
 
         left = ttk.Frame(content)
@@ -138,23 +85,6 @@ class ReviewToolApp(tk.Tk):
         right.grid(row=0, column=1, sticky="nsew", padx=(8, 0))
         self._build_task_panel(left)
         self._build_feedback_panel(right)
-
-    def _build_sidebar(self, parent: ttk.Frame) -> None:
-        brand = ttk.Frame(parent, style="Sidebar.TFrame", padding=(14, 12, 12, 10))
-        brand.pack(fill=tk.X)
-        ttk.Label(brand, text="Asset Review", style="Brand.TLabel").pack(anchor=tk.W)
-        ttk.Label(brand, text="资产验收表格", style="Sidebar.Muted.TLabel").pack(anchor=tk.W, pady=(2, 0))
-        tk.Frame(parent, height=1, bg=self._palette["border"]).pack(fill=tk.X)
-
-        nav = ttk.Frame(parent, style="Sidebar.TFrame", padding=(8, 10))
-        nav.pack(fill=tk.X)
-        ttk.Label(nav, text="模块", style="Sidebar.Muted.TLabel").pack(anchor=tk.W, padx=6, pady=(0, 5))
-        ttk.Button(nav, text="▣  表格生成", style="Nav.Active.TButton").pack(fill=tk.X)
-
-        about = ttk.Frame(parent, style="Sidebar.TFrame", padding=(14, 12))
-        about.pack(side=tk.BOTTOM, fill=tk.X)
-        ttk.Label(about, text="工作流", style="Sidebar.Muted.TLabel").pack(anchor=tk.W)
-        ttk.Label(about, text="目录 → 渲染 → Excel", style="Sidebar.TLabel").pack(anchor=tk.W, pady=(3, 0))
 
     def _build_task_panel(self, parent: ttk.Frame) -> None:
         parent.rowconfigure(0, weight=1)
@@ -174,7 +104,7 @@ class ReviewToolApp(tk.Tk):
             style="Hint.TLabel",
         ).grid(row=1, column=0, sticky="w", pady=(3, 8))
 
-        list_opts, _ = native_widget_options(self._theme, self._zoom)
+        list_opts, _ = native_widget_options()
         list_frame = ttk.Frame(card)
         list_frame.grid(row=2, column=0, sticky="nsew")
         list_frame.columnconfigure(0, weight=1)
@@ -225,7 +155,10 @@ class ReviewToolApp(tk.Tk):
         status_card = ttk.LabelFrame(parent, text=" 运行状态 ", padding=14)
         status_card.grid(row=0, column=0, sticky="ew", pady=(0, 12))
         status_card.columnconfigure(0, weight=1)
-        ttk.Label(status_card, textvariable=self._progress_var, style="Section.TLabel").grid(row=0, column=0, sticky="w")
+        self._progress_label = ttk.Label(
+            status_card, textvariable=self._progress_var, style="Section.TLabel"
+        )
+        self._progress_label.grid(row=0, column=0, sticky="w")
         self._progress = ttk.Progressbar(status_card, variable=self._progress_value, maximum=100)
         self._progress.grid(row=1, column=0, sticky="ew", pady=(9, 8))
         ttk.Label(status_card, textvariable=self._hint_var, style="Hint.TLabel").grid(row=2, column=0, sticky="w")
@@ -234,7 +167,7 @@ class ReviewToolApp(tk.Tk):
         log_card.grid(row=1, column=0, sticky="nsew")
         log_card.columnconfigure(0, weight=1)
         log_card.rowconfigure(0, weight=1)
-        _, log_opts = native_widget_options(self._theme, self._zoom)
+        _, log_opts = native_widget_options()
         self._log = scrolledtext.ScrolledText(log_card, state=DISABLED, width=36, height=16, **log_opts)
         self._log.grid(row=0, column=0, sticky="nsew")
         self._log.vbar.configure(
@@ -257,7 +190,7 @@ class ReviewToolApp(tk.Tk):
         )
         self._run_btn.grid(row=0, column=2, padx=(8, 0))
 
-    # ─── 状态与主题 ───────────────────────────────────────────────────────
+    # ─── 状态 ─────────────────────────────────────────────────────────────
 
     def _update_run_state(self) -> None:
         count = self._roots.size()
@@ -284,77 +217,15 @@ class ReviewToolApp(tk.Tk):
         for widget in self._inputs:
             widget.configure(state=DISABLED if running else NORMAL)
         self._run_btn.configure(text="生成中…" if running else "开始生成表格")
-        self._status_var.set("生成中" if running else "就绪")
         self._set_status_style("normal")
         self._update_run_state()
 
     def _set_status_style(self, kind: str) -> None:
         style = {
-            "success": "Status.Success.TLabel",
-            "error": "Status.Error.TLabel",
-        }.get(kind, "Status.TLabel")
-        self._status_label.configure(style=style)
-
-    def _cycle_theme(self) -> None:
-        preferences = ("system", "dark", "light")
-        index = preferences.index(self._theme_preference)
-        self._theme_preference = preferences[(index + 1) % len(preferences)]
-        self._theme = resolve_theme(self._theme_preference, self._system_prefers_light())
-        self._settings["theme"] = self._theme_preference
-        self._save_settings()
-        self._rebuild_for_appearance()
-
-    def _cycle_zoom(self) -> None:
-        index = ZOOM_STEPS.index(self._zoom)
-        self._zoom = ZOOM_STEPS[(index + 1) % len(ZOOM_STEPS)]
-        self._settings["zoom"] = self._zoom
-        self._save_settings()
-        self._rebuild_for_appearance()
-
-    def _rebuild_for_appearance(self) -> None:
-        roots = list(self._roots.get(0, END))
-        log_text = self._log.get("1.0", END).rstrip()
-        for child in self.winfo_children():
-            child.destroy()
-        self._inputs.clear()
-        self._palette = apply_theme(self, self._theme, self._zoom)
-        self._build_ui()
-        for root in roots:
-            self._roots.insert(END, root)
-        if log_text:
-            self._log.configure(state=NORMAL)
-            self._log.insert(END, log_text + "\n")
-            self._log.configure(state=DISABLED)
-        self._theme_btn.configure(text=self._theme_button_text())
-        self._zoom_btn.configure(text=f"{self._zoom}%")
-        if self._running:
-            for widget in self._inputs:
-                widget.configure(state=DISABLED)
-        self._update_run_state()
-
-    def _theme_button_text(self) -> str:
-        return {"system": "跟随系统", "dark": "深色", "light": "浅色"}[self._theme_preference]
-
-    @staticmethod
-    def _system_prefers_light() -> bool:
-        try:
-            import winreg
-
-            with winreg.OpenKey(
-                winreg.HKEY_CURRENT_USER,
-                r"Software\Microsoft\Windows\CurrentVersion\Themes\Personalize",
-            ) as key:
-                return bool(winreg.QueryValueEx(key, "AppsUseLightTheme")[0])
-        except (OSError, ImportError):
-            return False
-
-    def _poll_system_theme(self) -> None:
-        if self._theme_preference == "system" and not self._running:
-            resolved = resolve_theme("system", self._system_prefers_light())
-            if resolved != self._theme:
-                self._theme = resolved
-                self._rebuild_for_appearance()
-        self.after(2000, self._poll_system_theme)
+            "success": "Section.Success.TLabel",
+            "error": "Section.Error.TLabel",
+        }.get(kind, "Section.TLabel")
+        self._progress_label.configure(style=style)
 
     def _on_path_edited(self, *_args) -> None:
         if hasattr(self, "_run_btn"):
@@ -409,7 +280,8 @@ class ReviewToolApp(tk.Tk):
         if current and Path(current).is_file():
             self._update_run_state()
             return
-        self._status_var.set("正在查找 Blender")
+        self._progress_var.set("正在查找 Blender")
+        self._set_status_style("normal")
         self._hint_var.set("正在后台检查常见安装位置…")
         self._detect_revision += 1
         revision = self._detect_revision
@@ -442,7 +314,7 @@ class ReviewToolApp(tk.Tk):
             self._set_blender_path(str(candidates[0]))
             self._log_line(f"已自动探测到 Blender: {candidates[0]}")
         else:
-            self._status_var.set("未找到 Blender")
+            self._progress_var.set("未找到 Blender")
             self._set_status_style("error")
             self._hint_var.set("未找到 Blender，请点击“浏览…”手动指定")
         self._update_run_state()
@@ -451,7 +323,7 @@ class ReviewToolApp(tk.Tk):
         self._blend_var.set(path)
         self._settings["blender_path"] = path
         self._save_settings()
-        self._status_var.set("就绪")
+        self._progress_var.set("等待开始")
         self._set_status_style("normal")
         self._update_run_state()
 
@@ -525,7 +397,6 @@ class ReviewToolApp(tk.Tk):
         self._cancel_event.set()
         self._cancel_btn.configure(state=DISABLED)
         self._progress_var.set("正在停止当前 Blender 任务")
-        self._status_var.set("正在取消")
         self._log_line("已请求取消任务…")
 
     def _finish_with_success(self, output: Path) -> None:
@@ -534,7 +405,6 @@ class ReviewToolApp(tk.Tk):
         self._progress_value.set(100)
         self._progress_var.set("生成完成")
         self._hint_var.set(f"已保存：{output.name}")
-        self._status_var.set("已完成")
         self._set_status_style("success")
         self._log_line(f"已生成表格: {output}")
 
@@ -542,14 +412,12 @@ class ReviewToolApp(tk.Tk):
         self._set_running(False)
         self._progress_var.set("任务已取消")
         self._hint_var.set("已保留当前输出目录中的既有文件")
-        self._status_var.set("已取消")
         self._log_line("任务已取消")
 
     def _finish_with_error(self, message: str) -> None:
         self._set_running(False)
         self._progress_var.set("生成失败")
         self._hint_var.set("请查看任务日志后修正输入并重试")
-        self._status_var.set("失败")
         self._set_status_style("error")
         self._log_line(f"[错误] {message}")
         messagebox.showerror("生成失败", message, parent=self)
@@ -597,8 +465,11 @@ class ReviewToolApp(tk.Tk):
             pass
 
     def _restore_window(self) -> None:
-        width = max(1040, self._safe_int(self._settings.get("window_width"), 1160))
-        height = max(680, self._safe_int(self._settings.get("window_height"), 760))
+        if self._settings.get("layout_version") == 2:
+            width = max(820, self._safe_int(self._settings.get("window_width"), 980))
+            height = max(560, self._safe_int(self._settings.get("window_height"), 660))
+        else:
+            width, height = 980, 660
         screen_w, screen_h = self.winfo_screenwidth(), self.winfo_screenheight()
         width = min(width, int(screen_w * 0.94))
         height = min(height, int(screen_h * 0.92))
@@ -616,8 +487,7 @@ class ReviewToolApp(tk.Tk):
         self._cancel_event.set()
         self._settings.update(
             {
-                "theme": self._theme_preference,
-                "zoom": self._zoom,
+                "layout_version": 2,
                 "output_dir": self._out_var.get().strip(),
                 "blender_path": self._blend_var.get().strip(),
                 "window_width": self.winfo_width(),
@@ -626,7 +496,7 @@ class ReviewToolApp(tk.Tk):
         )
         self._save_settings()
         if self._worker and self._worker.is_alive():
-            self._status_var.set("正在停止任务并关闭")
+            self._progress_var.set("正在停止任务并关闭")
             for widget in self._inputs:
                 widget.configure(state=DISABLED)
             self._run_btn.configure(state=DISABLED)
